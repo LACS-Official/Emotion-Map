@@ -1,0 +1,72 @@
+.app-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.ui-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+}
+
+.left-controls {
+  position: absolute;
+  top: 100px;
+  left: 30px;
+  pointer-events: auto;
+}
+
+.right-panel {
+  position: absolute;
+  top: 100px;
+  right: 30px;
+  bottom: 40px;
+  width: 380px;
+  pointer-events: none; /* Allow clicks to pass through to map controls */
+}
+
+/* Ensure children that need interaction have pointer-events: auto */
+.right-panel > * {
+  pointer-events: auto;
+}
+
+.bottom-center {
+  position: absolute;
+  bottom: 50px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 600px;
+  max-width: 95vw;
+  pointer-events: auto;
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.8) !important;
+  backdrop-filter: blur(20px);
+  border-radius: 24px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+}
+
+.glass.light {
+  background: rgba(255, 255, 255, 0.85) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+@media (max-width: 1024px) {
+  .right-panel {
+    display: none;
+  }
+  .bottom-center {
+    width: 90%;
+  }
+}
