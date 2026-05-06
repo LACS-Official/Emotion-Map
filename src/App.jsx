@@ -4,6 +4,7 @@ import NavBar from './components/NavBar';
 import EmotionFilter from './components/EmotionFilter';
 import DataPanel from './components/DataPanel';
 import MoodInput from './components/MoodInput';
+import ImageModal from './components/ImageModal';
 import './App.css';
 
 function App() {
@@ -36,6 +37,8 @@ function App() {
           </div>
         </div>
       </main>
+
+      <ImageModal />
     </div>
   );
 }

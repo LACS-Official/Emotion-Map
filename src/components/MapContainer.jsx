@@ -9,7 +9,7 @@ const MapContainer = ({ activeFilter }) => {
   const infoWindow = useRef(null);
   const [scriptLoaded, setScriptLoaded] = useState(false);
   const [emotions, setEmotions] = useState([]);
-  const vizMode = 'heatmap';
+  const [vizMode, setVizMode] = useState('cluster'); // 默认使用聚合模式，可以看到具体备注
   const mapStyle = 'style1';
 
   const emotionConfig = {
@@ -35,7 +35,7 @@ const MapContainer = ({ activeFilter }) => {
 
   const fetchEmotions = async () => {
     try {
-      const response = await fetch(`http://localhost:3001/api/emotions?type=${activeFilter}`);
+      const response = await fetch(`http://localhost:10001/api/emotions?type=${activeFilter}`);
       const data = await response.json();
       const validData = data.map(item => ({
         ...item,
@@ -123,7 +123,7 @@ const MapContainer = ({ activeFilter }) => {
                     <span style="font-size: 1.4rem;">${emotionConfig[emotion.type]?.emoji || '😊'}</span>
                     <span style="font-size: 14px;">${emotion.message || '记录心情'}</span>
                   </div>
-                  ${emotion.image_url ? `<img src="http://localhost:3001${emotion.image_url}" style="width: 100%; border-radius: 10px; margin-top: 8px; border: 1px solid #e2e8f0; display: block;" />` : ''}
+                  ${emotion.image_url ? `<img src="http://localhost:10001${emotion.image_url}" style="width: 100%; border-radius: 10px; margin-top: 8px; border: 1px solid #e2e8f0; display: block;" />` : ''}
                   <div style="font-size: 11px; color: #94a3b8; margin-top: 10px; text-align: right; border-top: 1px solid #f1f5f9; padding-top: 6px;">${new Date(emotion.timestamp).toLocaleString()}</div>
                 </div>`;
                 infoWindow.current.setContent(content);
@@ -146,16 +146,58 @@ const MapContainer = ({ activeFilter }) => {
     if (mapInstance.current && window.TMap) {
       const TMap = window.TMap;
       
-      // Update Map Style - Safety check for method existence
       if (typeof mapInstance.current.setMapStyleId === 'function') {
         mapInstance.current.setMapStyleId(mapStyle);
       }
       
+      // Group emotions by location (5 decimal places)
+      const grouped = emotions.reduce((acc, curr) => {
+        const lat = Number(curr.lat);
+        const lng = Number(curr.lng);
+        if (isNaN(lat) || isNaN(lng)) return acc;
+        
+        const key = `${lat.toFixed(5)},${lng.toFixed(5)}`;
+        if (!acc[key]) {
+          acc[key] = {
+            id: key,
+            position: { lat, lng },
+            items: [],
+            counts: {}
+          };
+        }
+        acc[key].items.push(curr);
+        acc[key].counts[curr.type] = (acc[key].counts[curr.type] || 0) + 1;
+        return acc;
+      }, {});
+
+      const groupedArray = Object.values(grouped).map(group => {
+        const total = group.items.length;
+        const sortedTypes = Object.entries(group.counts)
+          .sort((a, b) => b[1] - a[1])
+          .map(([type, count]) => ({
+            type,
+            count,
+            probability: Math.round((count / total) * 100)
+          }));
+        
+        return {
+          ...group,
+          topType: sortedTypes[0].type,
+          probability: sortedTypes[0].probability,
+          sortedTypes,
+          total
+        };
+      });
+
       try {
         if (TMap.visual && TMap.visual.Layer && TMap.visual.Layer.Heatmap) {
-          const grouped = emotions.reduce((acc, curr) => {
+          const typeHeatmapData = emotions.reduce((acc, curr) => {
             if (!acc[curr.type]) acc[curr.type] = [];
-            acc[curr.type].push({ lat: curr.lat, lng: curr.lng, value: curr.intensity || 50 });
+            acc[curr.type].push({ 
+              lat: Number(curr.lat), 
+              lng: Number(curr.lng), 
+              value: curr.intensity || 50 
+            });
             return acc;
           }, {});
 
@@ -168,7 +210,7 @@ const MapContainer = ({ activeFilter }) => {
               });
             }
             if (vizMode === 'heatmap') {
-              heatmapLayers.current[type].setData(grouped[type] || []);
+              heatmapLayers.current[type].setData(typeHeatmapData[type] || []);
               heatmapLayers.current[type].show();
             } else {
               heatmapLayers.current[type].hide();
@@ -176,7 +218,6 @@ const MapContainer = ({ activeFilter }) => {
           });
         }
 
-        // Cluster Implementation
         if (TMap.visual && TMap.visual.Layer && TMap.visual.Layer.Cluster) {
           if (!clusterLayer.current) {
             clusterLayer.current = new TMap.visual.Layer.Cluster({
@@ -194,7 +235,11 @@ const MapContainer = ({ activeFilter }) => {
             });
           }
           if (vizMode === 'cluster') {
-            const clusterData = emotions.map(e => ({ lat: e.lat, lng: e.lng, value: 1 }));
+            const clusterData = emotions.map(e => ({ 
+              lat: Number(e.lat), 
+              lng: Number(e.lng), 
+              value: 1 
+            }));
             clusterLayer.current.setData(clusterData);
             clusterLayer.current.show();
           } else {
@@ -205,20 +250,30 @@ const MapContainer = ({ activeFilter }) => {
 
       try {
         if (TMap.MultiLabel) {
-          const labels = emotions
-            .filter(e => e.message || e.image_url)
-            .map(e => {
-              const lat = parseFloat(e.lat);
-              const lng = parseFloat(e.lng);
-              if (isNaN(lat) || isNaN(lng)) return null;
-              
-              return {
-                id: 'l' + e.id,
-                position: { lat, lng },
-                content: `${emotionConfig[e.type]?.emoji || '😊'}\n${e.message || '记录'}`,
-                styleId: 'labelStyle'
-              };
-            }).filter(l => l !== null);
+          const labels = groupedArray.map(group => {
+            const hasImage = group.items.some(item => item.image_url);
+            const emoji = emotionConfig[group.topType]?.emoji || '😊';
+            let content = emoji;
+            const latestMsg = group.items[group.items.length - 1].message;
+            const displayMsg = latestMsg ? (latestMsg.length > 8 ? latestMsg.substring(0, 8) + '...' : latestMsg) : '记录';
+            
+            if (group.total > 1) {
+              content += ` ${group.total}条: ${displayMsg}`;
+            } else {
+              content += ` ${displayMsg}`;
+            }
+
+            if (hasImage) {
+              content += ' 🖼️';
+            }
+
+            return {
+              id: 'g' + group.id,
+              position: new TMap.LatLng(group.position.lat, group.position.lng),
+              content: content,
+              styleId: 'labelStyle'
+            };
+          });
 
           if (!labelLayer.current) {
             labelLayer.current = new TMap.MultiLabel({
@@ -227,34 +282,87 @@ const MapContainer = ({ activeFilter }) => {
               styles: {
                 labelStyle: new TMap.LabelStyle({
                   color: '#1e293b',
-                  size: 15,
+                  size: 14,
                   offset: { x: 0, y: -25 },
                   alignment: 'center',
-                  padding: 12,
+                  padding: '10px 14px',
                   backgroundColor: '#ffffff',
-                  borderRadius: 14,
+                  borderRadius: 16,
                   borderWidth: 2,
                   borderColor: '#e2e8f0',
-                  boxShadow: '0 6px 16px rgba(0,0,0,0.12)'
+                  boxShadow: '0 6px 16px rgba(0,0,0,0.12)',
+                  lineHeight: 1.4
                 })
               },
               geometries: labels
             });
           } else {
-            setTimeout(() => {
-              if (labelLayer.current) {
-                if (typeof labelLayer.current.setGeometries === 'function') {
-                  labelLayer.current.setGeometries(labels);
-                } else if (typeof labelLayer.current.setData === 'function') {
-                  labelLayer.current.setData(labels);
-                }
-              }
-            }, 0);
+            labelLayer.current.setGeometries(labels);
           }
+
+          // Update click handler for grouped labels
+          const handleClick = (evt) => {
+            if (labelLayer.current) {
+              const label = labelLayer.current.getGeometryById(evt.geometryId);
+              if (label) {
+                const groupKey = evt.geometryId.substring(1);
+                const group = groupedArray.find(g => g.id === groupKey);
+                if (group) {
+                  let content = `<div style="padding: 16px; min-width: 240px; max-width: 300px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                    <div style="border-bottom: 2px solid #f1f5f9; padding-bottom: 12px; margin-bottom: 12px;">
+                      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <span style="font-weight: 800; color: #0f172a; font-size: 15px;">情绪分布</span>
+                        <span style="background: #eff6ff; color: #3b82f6; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 700;">${group.total} 条记录</span>
+                      </div>
+                      <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;">
+                        ${group.sortedTypes.map(t => `
+                          <div style="display: flex; align-items: center; gap: 4px; background: #f8fafc; padding: 4px 8px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                            <span>${emotionConfig[t.type]?.emoji}</span>
+                            <span style="font-size: 12px; font-weight: 600; color: #475569;">${t.probability}%</span>
+                          </div>
+                        `).join('')}
+                      </div>
+                    </div>
+                    <div style="max-height: 200px; overflow-y: auto; padding-right: 4px;" class="custom-scroll">
+                      ${group.items.map((item, idx) => `
+                        <div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: ${idx === group.items.length - 1 ? 'none' : '1px dashed #f1f5f9'}">
+                          <div style="display: flex; align-items: flex-start; gap: 10px;">
+                            <span style="font-size: 1.2rem; margin-top: 2px;">${emotionConfig[item.type]?.emoji}</span>
+                            <div style="flex: 1;">
+                              <div style="font-size: 13px; color: #334155; line-height: 1.5; font-weight: 500;">${item.message || '分享了心情'}</div>
+                              ${item.image_url ? `
+                                <div style="margin-top: 8px; cursor: zoom-in;" onclick="window.showImageFull('http://localhost:10001${item.image_url}')">
+                                  <img src="http://localhost:10001${item.image_url}" style="width: 100%; border-radius: 8px; border: 1px solid #e2e8f0; display: block; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'" />
+                                </div>` : ''}
+                              <div style="font-size: 10px; color: #94a3b8; margin-top: 6px;">${new Date(item.timestamp).toLocaleString()}</div>
+                            </div>
+                          </div>
+                        </div>
+                      `).join('')}
+                    </div>
+                  </div>`;
+                  infoWindow.current.setContent(content);
+                  infoWindow.current.setPosition(evt.latLng);
+                  infoWindow.current.open();
+                }
+              } else {
+                infoWindow.current.close();
+              }
+            }
+          };
+
+          mapInstance.current.on('click', handleClick);
+          return () => {
+            if (mapInstance.current) {
+              mapInstance.current.off('click', handleClick);
+            }
+          };
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error('Labels/InfoWindow update failed:', e);
+      }
     }
-  }, [emotions, scriptLoaded]);
+  }, [emotions, scriptLoaded, vizMode]);
 
   return (
     <div className="map-wrapper">

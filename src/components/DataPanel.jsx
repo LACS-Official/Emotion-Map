@@ -15,7 +15,7 @@ const DataPanel = () => {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const response = await fetch('http://localhost:3001/api/stats');
+        const response = await fetch('http://localhost:10001/api/stats');
         const data = await response.json();
         setStats(Array.isArray(data) ? data : []);
       } catch (err) {
@@ -29,7 +29,19 @@ const DataPanel = () => {
 
   useEffect(() => {
     let myChart = null;
-    if (chartRef.current && stats.length > 0 && !isCollapsed) {
+    let resizeTimer = null;
+    let retryTimer = null;
+
+    const handleResize = () => myChart?.resize();
+
+    const initChart = () => {
+      if (!chartRef.current || isCollapsed || stats.length === 0) return;
+      
+      if (chartRef.current.clientWidth === 0 || chartRef.current.clientHeight === 0) {
+        retryTimer = setTimeout(initChart, 100);
+        return;
+      }
+
       myChart = echarts.init(chartRef.current);
       const option = {
         backgroundColor: 'transparent',
@@ -62,19 +74,20 @@ const DataPanel = () => {
         ]
       };
       myChart.setOption(option);
-      
-      const handleResize = () => myChart?.resize();
       window.addEventListener('resize', handleResize);
+      resizeTimer = setTimeout(() => myChart?.resize(), 500);
+    };
 
-      // Trigger a resize after animation completes
-      const timer = setTimeout(() => myChart?.resize(), 500);
+    initChart();
 
-      return () => {
-        window.removeEventListener('resize', handleResize);
-        clearTimeout(timer);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      clearTimeout(resizeTimer);
+      clearTimeout(retryTimer);
+      if (myChart) {
         myChart.dispose();
-      };
-    }
+      }
+    };
   }, [stats, isCollapsed]);
 
   return (

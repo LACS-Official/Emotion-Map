@@ -137,7 +137,7 @@ const MoodInput = () => {
     if (image) formData.append('image', image);
 
     try {
-      const response = await fetch('http://localhost:3001/api/mood', {
+      const response = await fetch('http://localhost:10001/api/mood', {
         method: 'POST',
         body: formData,
       });
